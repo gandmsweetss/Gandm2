@@ -145,9 +145,7 @@ function pickPrize() {
 function formatDate(d) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
-
 // Read a unique code from the link, e.g. scratcher.html?code=jordan-0829
-// Each distinct code can only be scratched once per device/browser.
 const urlParams = new URLSearchParams(window.location.search);
 const orderCode = urlParams.get("code");
 const storageKey = orderCode ? "gm_scratcher_" + orderCode : null;
@@ -170,13 +168,27 @@ function showAlreadyUsedState(prize) {
   document.querySelector(".scratch-wrap").style.padding = "20px";
 }
 
-let existingRecord = null;
-if (storageKey) {
+async function checkCodeServer(code) {
   try {
-    const raw = localStorage.getItem(storageKey);
-    if (raw) existingRecord = JSON.parse(raw);
+    const res = await fetch("/api/scratch-code", {
+      method: "POST",
+      body: JSON.stringify({ code, action: "check" })
+    });
+    return await res.json();
   } catch (e) {
-    existingRecord = null;
+    return null;
+  }
+}
+
+async function redeemCodeServer(code, prize) {
+  try {
+    const res = await fetch("/api/scratch-code", {
+      method: "POST",
+      body: JSON.stringify({ code, action: "redeem", prize })
+    });
+    return await res.json();
+  } catch (e) {
+    return null;
   }
 }
 
@@ -184,9 +196,30 @@ const today = new Date();
 const validUntil = new Date(today);
 validUntil.setDate(validUntil.getDate() + 30);
 
-if (existingRecord) {
-  showAlreadyUsedState(existingRecord.prize);
-} else {
+async function main() {
+  let existingRecord = null;
+  if (storageKey) {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) existingRecord = JSON.parse(raw);
+    } catch (e) {}
+  }
+
+  let serverUsed = false;
+  let serverPrize = null;
+  if (orderCode) {
+    const check = await checkCodeServer(orderCode);
+    if (check && check.used) {
+      serverUsed = true;
+      serverPrize = check.prize;
+    }
+  }
+
+  if (existingRecord || serverUsed) {
+    showAlreadyUsedState(existingRecord ? existingRecord.prize : serverPrize);
+    return;
+  }
+
   const prizeTextEl = document.getElementById("prize-text");
   const prize = pickPrize();
   prize.split("\n").forEach(line => {
@@ -197,6 +230,8 @@ if (existingRecord) {
 
   initScratchCanvas(prize);
 }
+
+main();
 
 function initScratchCanvas(prize) {
   const canvas = document.getElementById("scratch-canvas");
@@ -257,11 +292,13 @@ function initScratchCanvas(prize) {
       resultEl.style.display = "block";
       resultEl.innerHTML = `Show this screen (or a screenshot) next time you order to redeem.<br>Valid through <b>${formatDate(validUntil)}</b>.`;
 
-      // Lock this specific link so it can't be re-scratched on this device
       if (storageKey) {
         try {
           localStorage.setItem(storageKey, JSON.stringify({ prize, revealedAt: new Date().toISOString() }));
-        } catch (e) { /* localStorage unavailable — non-fatal, just can't lock it */ }
+        } catch (e) {}
+      }
+      if (orderCode) {
+        redeemCodeServer(orderCode, prize);
       }
     }
   }
@@ -278,6 +315,3 @@ function initScratchCanvas(prize) {
   canvas.ontouchmove = moveDraw;
   canvas.ontouchend = endDraw;
 }
-</script>
-</body>
-</html>
