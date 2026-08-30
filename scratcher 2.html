@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>G & M Sweets — Your Scratcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Space+Mono:wght@400;700&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #FFF8EC;
+    --gold: #D98F2B;
+    --gold-deep: #8A5A22;
+    --cherry: #C13B2E;
+    --ink: #2B211C;
+    --paper: #FFFDF8;
+    --line: rgba(43,33,28,0.14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--cream);
+    color: var(--ink);
+    font-family: 'Karla', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .card {
+    max-width: 480px;
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 28px 24px;
+    text-align: center;
+    box-shadow: 0 12px 30px rgba(43,33,28,0.08);
+  }
+  .steam {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gold-deep);
+    font-family: 'Space Mono', monospace;
+  }
+  h1 {
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 800;
+    font-size: 1.8rem;
+    margin: 10px 0 4px;
+    color: var(--ink);
+  }
+  .sub {
+    font-size: 0.9rem;
+    color: #6b5c4f;
+    margin-bottom: 22px;
+  }
+  .scratch-wrap {
+    position: relative;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  #prize-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 700;
+    font-size: 1.3rem;
+    color: var(--gold-deep);
+    padding: 16px;
+    border-radius: 16px;
+    background: var(--cream);
+    gap: 4px;
+  }
+  #scratch-canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 16px;
+    touch-action: none;
+    cursor: pointer;
+    position: relative;
+  }
+  #instructions {
+    font-size: 0.82rem;
+    color: #6b5c4f;
+    margin-top: 14px;
+  }
+  #result {
+    display: none;
+    margin-top: 16px;
+    font-size: 0.85rem;
+    color: #6b5c4f;
+    background: var(--cream);
+    border-radius: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+  }
+  #result b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="steam">G & M Sweets</div>
+  <h1>Scratch & Win 🎉</h1>
+  <div class="sub">You've got one scratcher — good luck!</div>
+
+  <div class="scratch-wrap">
+    <div id="prize-text"></div>
+    <canvas id="scratch-canvas" width="600" height="220"></canvas>
+  </div>
+
+  <div id="instructions">Drag your finger or mouse across the box above</div>
+  <div id="result"></div>
+</div>
+
+<script>
+const PRIZE_TABLE = [
+  { weight: 40, label: "Thanks for playing!\nTry again next order." },
+  { weight: 30, label: "You won:\nFree topping\non your next order!" },
+  { weight: 15, label: "You won:\n10% off\nyour next order!" },
+  { weight: 10, label: "You won:\n20% off\nyour next order!" },
+  { weight: 4,  label: "You won:\n50% off\nyour next order!" },
+  { weight: 1,  label: "🎉 JACKPOT! 🎉\nFree funnel cake\non your next order!" },
+];
+
+function pickPrize() {
+  const totalWeight = PRIZE_TABLE.reduce((sum, p) => sum + p.weight, 0);
+  let r = Math.random() * totalWeight;
+  for (const p of PRIZE_TABLE) {
+    if (r < p.weight) return p.label;
+    r -= p.weight;
+  }
+  return PRIZE_TABLE[0].label;
+}
+
+function formatDate(d) {
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// Read a unique code from the link, e.g. scratcher.html?code=jordan-0829
+// Each distinct code can only be scratched once per device/browser.
+const urlParams = new URLSearchParams(window.location.search);
+const orderCode = urlParams.get("code");
+const storageKey = orderCode ? "gm_scratcher_" + orderCode : null;
+
+function showAlreadyUsedState(prize) {
+  const prizeTextEl = document.getElementById("prize-text");
+  prizeTextEl.textContent = "";
+  prize.split("\n").forEach(line => {
+    const div = document.createElement("div");
+    div.textContent = line;
+    prizeTextEl.appendChild(div);
+  });
+  document.getElementById("scratch-canvas").style.display = "none";
+  document.getElementById("instructions").style.display = "none";
+  const resultEl = document.getElementById("result");
+  resultEl.style.display = "block";
+  resultEl.innerHTML = `This scratcher was already used. Here's what it revealed:`;
+  document.querySelector(".scratch-wrap").style.background = "var(--cream)";
+  document.querySelector(".scratch-wrap").style.borderRadius = "16px";
+  document.querySelector(".scratch-wrap").style.padding = "20px";
+}
+
+let existingRecord = null;
+if (storageKey) {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) existingRecord = JSON.parse(raw);
+  } catch (e) {
+    existingRecord = null;
+  }
+}
+
+const today = new Date();
+const validUntil = new Date(today);
+validUntil.setDate(validUntil.getDate() + 30);
+
+if (existingRecord) {
+  showAlreadyUsedState(existingRecord.prize);
+} else {
+  const prizeTextEl = document.getElementById("prize-text");
+  const prize = pickPrize();
+  prize.split("\n").forEach(line => {
+    const div = document.createElement("div");
+    div.textContent = line;
+    prizeTextEl.appendChild(div);
+  });
+
+  initScratchCanvas(prize);
+}
+
+function initScratchCanvas(prize) {
+  const canvas = document.getElementById("scratch-canvas");
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.fillStyle = "#c8c8cd";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#a5a5ac";
+  ctx.lineWidth = 2;
+  for (let i = -h; i < w; i += 22) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + h, h);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#505058";
+  ctx.font = "bold 26px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("SCRATCH HERE", w / 2, h / 2);
+
+  let isDrawing = false;
+  let revealed = false;
+
+  function getPos(evt) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = w / rect.width;
+    const scaleY = h / rect.height;
+    const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+    const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  }
+
+  function scratchAt(x, y) {
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath();
+    ctx.arc(x, y, 22, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function checkRevealPercent() {
+    if (revealed) return;
+    const imageData = ctx.getImageData(0, 0, w, h).data;
+    let transparent = 0;
+    const total = w * h;
+    for (let i = 3; i < imageData.length; i += 4 * 20) {
+      if (imageData[i] < 40) transparent++;
+    }
+    const sampledTotal = Math.ceil(total / 20);
+    const pct = transparent / sampledTotal;
+    if (pct > 0.45) {
+      revealed = true;
+      ctx.clearRect(0, 0, w, h);
+      document.getElementById("instructions").style.display = "none";
+      const resultEl = document.getElementById("result");
+      resultEl.style.display = "block";
+      resultEl.innerHTML = `Show this screen (or a screenshot) next time you order to redeem.<br>Valid through <b>${formatDate(validUntil)}</b>.`;
+
+      // Lock this specific link so it can't be re-scratched on this device
+      if (storageKey) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ prize, revealedAt: new Date().toISOString() }));
+        } catch (e) { /* localStorage unavailable — non-fatal, just can't lock it */ }
+      }
+    }
+  }
+
+  function startDraw(evt) { isDrawing = true; const pos = getPos(evt); scratchAt(pos.x, pos.y); evt.preventDefault(); }
+  function moveDraw(evt) { if (!isDrawing || revealed) return; const pos = getPos(evt); scratchAt(pos.x, pos.y); checkRevealPercent(); evt.preventDefault(); }
+  function endDraw() { isDrawing = false; checkRevealPercent(); }
+
+  canvas.onmousedown = startDraw;
+  canvas.onmousemove = moveDraw;
+  canvas.onmouseup = endDraw;
+  canvas.onmouseleave = endDraw;
+  canvas.ontouchstart = startDraw;
+  canvas.ontouchmove = moveDraw;
+  canvas.ontouchend = endDraw;
+}
+</script>
+</body>
+</html>
