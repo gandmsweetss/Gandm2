@@ -105,6 +105,38 @@
     border: 1px solid var(--line);
   }
   #result b { color: var(--ink); }
+  #screenshot-prompt {
+    display: none;
+    margin-top: 10px;
+    background: #fff4e0;
+    border: 2px dashed var(--gold);
+    color: var(--gold-deep);
+    border-radius: 12px;
+    padding: 12px 16px;
+    text-align: center;
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+  #expiry-banner {
+    display: none;
+    margin-top: 12px;
+    background: var(--cherry);
+    color: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  #expiry-banner .expiry-headline {
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 700;
+    font-size: 1.05rem;
+  }
+  #expiry-banner .expiry-date {
+    font-size: 0.85rem;
+    margin-top: 4px;
+    opacity: 0.95;
+  }
 </style>
 </head>
 <body>
@@ -120,6 +152,11 @@
 
   <div id="instructions">Drag your finger or mouse across the box above</div>
   <div id="result"></div>
+  <div id="screenshot-prompt">📸 Screenshot this now so you don't lose it!</div>
+  <div id="expiry-banner">
+    <div class="expiry-headline" id="expiry-headline"></div>
+    <div class="expiry-date" id="expiry-date"></div>
+  </div>
 </div>
 
 <script>
@@ -145,15 +182,40 @@ function pickPrize() {
 function formatDate(d) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
+
 // Read a unique code from the link, e.g. scratcher.html?code=jordan-0829
+// Each distinct code can only be scratched once per device/browser.
 const urlParams = new URLSearchParams(window.location.search);
 const orderCode = urlParams.get("code");
 const storageKey = orderCode ? "gm_scratcher_" + orderCode : null;
 
-function showAlreadyUsedState(prize) {
+function renderExpiryBanner(validUntilDate) {
+  const banner = document.getElementById("expiry-banner");
+  const headlineEl = document.getElementById("expiry-headline");
+  const dateEl = document.getElementById("expiry-date");
+  banner.style.display = "block";
+
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const today = new Date();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const validUntilMidnight = new Date(validUntilDate.getFullYear(), validUntilDate.getMonth(), validUntilDate.getDate());
+  const daysLeft = Math.round((validUntilMidnight - todayMidnight) / msPerDay);
+
+  if (daysLeft > 0) {
+    headlineEl.textContent = daysLeft === 1
+      ? "⏰ Come back TODAY to redeem!"
+      : `⏰ Come back within ${daysLeft} days to redeem!`;
+    dateEl.innerHTML = `Valid through <b>${formatDate(validUntilDate)}</b>`;
+  } else {
+    headlineEl.textContent = "This scratcher has expired";
+    dateEl.innerHTML = `It was valid through <b>${formatDate(validUntilDate)}</b>`;
+  }
+}
+
+function showAlreadyUsedState(record) {
   const prizeTextEl = document.getElementById("prize-text");
   prizeTextEl.textContent = "";
-  prize.split("\n").forEach(line => {
+  record.prize.split("\n").forEach(line => {
     const div = document.createElement("div");
     div.textContent = line;
     prizeTextEl.appendChild(div);
@@ -166,29 +228,20 @@ function showAlreadyUsedState(prize) {
   document.querySelector(".scratch-wrap").style.background = "var(--cream)";
   document.querySelector(".scratch-wrap").style.borderRadius = "16px";
   document.querySelector(".scratch-wrap").style.padding = "20px";
+
+  const revealedAt = record.revealedAt ? new Date(record.revealedAt) : new Date();
+  const originalValidUntil = new Date(revealedAt);
+  originalValidUntil.setDate(originalValidUntil.getDate() + 30);
+  renderExpiryBanner(originalValidUntil);
 }
 
-async function checkCodeServer(code) {
+let existingRecord = null;
+if (storageKey) {
   try {
-    const res = await fetch("/api/scratch-code", {
-      method: "POST",
-      body: JSON.stringify({ code, action: "check" })
-    });
-    return await res.json();
+    const raw = localStorage.getItem(storageKey);
+    if (raw) existingRecord = JSON.parse(raw);
   } catch (e) {
-    return null;
-  }
-}
-
-async function redeemCodeServer(code, prize) {
-  try {
-    const res = await fetch("/api/scratch-code", {
-      method: "POST",
-      body: JSON.stringify({ code, action: "redeem", prize })
-    });
-    return await res.json();
-  } catch (e) {
-    return null;
+    existingRecord = null;
   }
 }
 
@@ -196,30 +249,9 @@ const today = new Date();
 const validUntil = new Date(today);
 validUntil.setDate(validUntil.getDate() + 30);
 
-async function main() {
-  let existingRecord = null;
-  if (storageKey) {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw) existingRecord = JSON.parse(raw);
-    } catch (e) {}
-  }
-
-  let serverUsed = false;
-  let serverPrize = null;
-  if (orderCode) {
-    const check = await checkCodeServer(orderCode);
-    if (check && check.used) {
-      serverUsed = true;
-      serverPrize = check.prize;
-    }
-  }
-
-  if (existingRecord || serverUsed) {
-    showAlreadyUsedState(existingRecord ? existingRecord.prize : serverPrize);
-    return;
-  }
-
+if (existingRecord) {
+  showAlreadyUsedState(existingRecord);
+} else {
   const prizeTextEl = document.getElementById("prize-text");
   const prize = pickPrize();
   prize.split("\n").forEach(line => {
@@ -230,8 +262,6 @@ async function main() {
 
   initScratchCanvas(prize);
 }
-
-main();
 
 function initScratchCanvas(prize) {
   const canvas = document.getElementById("scratch-canvas");
@@ -290,15 +320,15 @@ function initScratchCanvas(prize) {
       document.getElementById("instructions").style.display = "none";
       const resultEl = document.getElementById("result");
       resultEl.style.display = "block";
-      resultEl.innerHTML = `Show this screen (or a screenshot) next time you order to redeem.<br>Valid through <b>${formatDate(validUntil)}</b>.`;
+      resultEl.innerHTML = `Show this screen next time you order to redeem.`;
+      document.getElementById("screenshot-prompt").style.display = "block";
+      renderExpiryBanner(new Date(validUntil));
 
+      // Lock this specific link so it can't be re-scratched on this device
       if (storageKey) {
         try {
           localStorage.setItem(storageKey, JSON.stringify({ prize, revealedAt: new Date().toISOString() }));
-        } catch (e) {}
-      }
-      if (orderCode) {
-        redeemCodeServer(orderCode, prize);
+        } catch (e) { /* localStorage unavailable — non-fatal, just can't lock it */ }
       }
     }
   }
@@ -315,3 +345,6 @@ function initScratchCanvas(prize) {
   canvas.ontouchmove = moveDraw;
   canvas.ontouchend = endDraw;
 }
+</script>
+</body>
+</html>
