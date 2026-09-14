@@ -1,0 +1,217 @@
+const PRIZE_TABLE = [
+  { weight: 40, label: "Thanks for playing!\nTry again next order." },
+  { weight: 30, label: "You won:\nFree topping\non your next order!" },
+  { weight: 15, label: "You won:\n10% off\nyour next order!" },
+  { weight: 10, label: "You won:\n20% off\nyour next order!" },
+  { weight: 4,  label: "You won:\n50% off\nyour next order!" },
+  { weight: 1,  label: "🎉 JACKPOT! 🎉\nFree funnel cake\non your next order!" },
+];
+
+function pickPrize() {
+  const totalWeight = PRIZE_TABLE.reduce((sum, p) => sum + p.weight, 0);
+  let r = Math.random() * totalWeight;
+  for (const p of PRIZE_TABLE) {
+    if (r < p.weight) return p.label;
+    r -= p.weight;
+  }
+  return PRIZE_TABLE[0].label;
+}
+
+function formatDate(d) {
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+const urlParams = new URLSearchParams(window.location.search);
+const orderCode = urlParams.get("code");
+const storageKey = orderCode ? "gm_scratcher_" + orderCode : null;
+
+function renderExpiryBanner(validUntilDate) {
+  const banner = document.getElementById("expiry-banner");
+  const headlineEl = document.getElementById("expiry-headline");
+  const dateEl = document.getElementById("expiry-date");
+  banner.style.display = "block";
+
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const today = new Date();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const validUntilMidnight = new Date(validUntilDate.getFullYear(), validUntilDate.getMonth(), validUntilDate.getDate());
+  const daysLeft = Math.round((validUntilMidnight - todayMidnight) / msPerDay);
+
+  if (daysLeft > 0) {
+    headlineEl.textContent = daysLeft === 1
+      ? "⏰ Come back TODAY to redeem!"
+      : `⏰ Come back within ${daysLeft} days to redeem!`;
+    dateEl.innerHTML = `Valid through <b>${formatDate(validUntilDate)}</b>`;
+  } else {
+    headlineEl.textContent = "This scratcher has expired";
+    dateEl.innerHTML = `It was valid through <b>${formatDate(validUntilDate)}</b>`;
+  }
+}
+
+function showAlreadyUsedState(record) {
+  const prizeTextEl = document.getElementById("prize-text");
+  prizeTextEl.textContent = "";
+  record.prize.split("\n").forEach(line => {
+    const div = document.createElement("div");
+    div.textContent = line;
+    prizeTextEl.appendChild(div);
+  });
+  document.getElementById("scratch-canvas").style.display = "none";
+  document.getElementById("instructions").style.display = "none";
+  const resultEl = document.getElementById("result");
+  resultEl.style.display = "block";
+  resultEl.innerHTML = `This scratcher was already used. Here's what it revealed:`;
+  document.querySelector(".scratch-wrap").style.background = "var(--cream)";
+  document.querySelector(".scratch-wrap").style.borderRadius = "16px";
+  document.querySelector(".scratch-wrap").style.padding = "20px";
+
+  const revealedAt = record.revealedAt ? new Date(record.revealedAt) : new Date();
+  const originalValidUntil = new Date(revealedAt);
+  originalValidUntil.setDate(originalValidUntil.getDate() + 30);
+  renderExpiryBanner(originalValidUntil);
+}
+
+async function checkCodeServer(code) {
+  try {
+    const res = await fetch("/api/scratch-code", {
+      method: "POST",
+      body: JSON.stringify({ code, action: "check" })
+    });
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function redeemCodeServer(code, prize) {
+  try {
+    const res = await fetch("/api/scratch-code", {
+      method: "POST",
+      body: JSON.stringify({ code, action: "redeem", prize })
+    });
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function main() {
+  let existingRecord = null;
+  if (storageKey) {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) existingRecord = JSON.parse(raw);
+    } catch (e) {}
+  }
+
+  if (!existingRecord && orderCode) {
+    const check = await checkCodeServer(orderCode);
+    if (check && check.used) {
+      existingRecord = { prize: check.prize, revealedAt: new Date().toISOString() };
+    }
+  }
+
+  if (existingRecord) {
+    showAlreadyUsedState(existingRecord);
+    return;
+  }
+
+  const prizeTextEl = document.getElementById("prize-text");
+  const prize = pickPrize();
+  prize.split("\n").forEach(line => {
+    const div = document.createElement("div");
+    div.textContent = line;
+    prizeTextEl.appendChild(div);
+  });
+
+  initScratchCanvas(prize);
+}
+
+main();
+
+function initScratchCanvas(prize) {
+  const canvas = document.getElementById("scratch-canvas");
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.fillStyle = "#c8c8cd";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#a5a5ac";
+  ctx.lineWidth = 2;
+  for (let i = -h; i < w; i += 22) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + h, h);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#505058";
+  ctx.font = "bold 26px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("SCRATCH HERE", w / 2, h / 2);
+
+  let isDrawing = false;
+  let revealed = false;
+
+  function getPos(evt) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = w / rect.width;
+    const scaleY = h / rect.height;
+    const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+    const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  }
+
+  function scratchAt(x, y) {
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath();
+    ctx.arc(x, y, 22, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function checkRevealPercent() {
+    if (revealed) return;
+    const imageData = ctx.getImageData(0, 0, w, h).data;
+    let transparent = 0;
+    const total = w * h;
+    for (let i = 3; i < imageData.length; i += 4 * 20) {
+      if (imageData[i] < 40) transparent++;
+    }
+    const sampledTotal = Math.ceil(total / 20);
+    const pct = transparent / sampledTotal;
+    if (pct > 0.45) {
+      revealed = true;
+      ctx.clearRect(0, 0, w, h);
+      document.getElementById("instructions").style.display = "none";
+      const resultEl = document.getElementById("result");
+      resultEl.style.display = "block";
+      resultEl.innerHTML = `Show this screen next time you order to redeem.`;
+      document.getElementById("screenshot-prompt").style.display = "block";
+      const validUntil = new Date();
+      validUntil.setDate(validUntil.getDate() + 30);
+      renderExpiryBanner(validUntil);
+
+      if (storageKey) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ prize, revealedAt: new Date().toISOString() }));
+        } catch (e) {}
+      }
+      if (orderCode) {
+        redeemCodeServer(orderCode, prize);
+      }
+    }
+  }
+
+  function startDraw(evt) { isDrawing = true; const pos = getPos(evt); scratchAt(pos.x, pos.y); evt.preventDefault(); }
+  function moveDraw(evt) { if (!isDrawing || revealed) return; const pos = getPos(evt); scratchAt(pos.x, pos.y); checkRevealPercent(); evt.preventDefault(); }
+  function endDraw() { isDrawing = false; checkRevealPercent(); }
+
+  canvas.onmousedown = startDraw;
+  canvas.onmousemove = moveDraw;
+  canvas.onmouseup = endDraw;
+  canvas.onmouseleave = endDraw;
+  canvas.ontouchstart = startDraw;
+  canvas.ontouchmove = moveDraw;
+  canvas.ontouchend = endDraw;
+}
