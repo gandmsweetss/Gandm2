@@ -1,176 +1,146 @@
-const PRIZE_TABLE = [
-  { weight: 40, label: "Thanks for playing!\nTry again next order." },
-  { weight: 30, label: "You won:\nFree topping\non your next order!" },
-  { weight: 15, label: "You won:\n10% off\nyour next order!" },
-  { weight: 10, label: "You won:\n20% off\nyour next order!" },
-  { weight: 4,  label: "You won:\n50% off\nyour next order!" },
-  { weight: 1,  label: "🎉 JACKPOT! 🎉\nFree funnel cake\non your next order!" },
-];
-
-function pickPrize() {
-  const totalWeight = PRIZE_TABLE.reduce((sum, p) => sum + p.weight, 0);
-  let r = Math.random() * totalWeight;
-  for (const p of PRIZE_TABLE) {
-    if (r < p.weight) return p.label;
-    r -= p.weight;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>G & M Sweets — Your Scratcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Space+Mono:wght@400;700&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #FFF8EC;
+    --gold: #D98F2B;
+    --gold-deep: #8A5A22;
+    --cherry: #C13B2E;
+    --ink: #2B211C;
+    --paper: #FFFDF8;
+    --line: rgba(43,33,28,0.14);
   }
-  return PRIZE_TABLE[0].label;
-}
-
-function formatDate(d) {
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-}
-
-const urlParams = new URLSearchParams(window.location.search);
-const orderCode = urlParams.get("code");
-const storageKey = orderCode ? "gm_scratcher_" + orderCode : null;
-
-function renderExpiryBanner(validUntilDate) {
-  const banner = document.getElementById("expiry-banner");
-  const headlineEl = document.getElementById("expiry-headline");
-  const dateEl = document.getElementById("expiry-date");
-  banner.style.display = "block";
-
-  const msPerDay = 1000 * 60 * 60 * 24;
-  const today = new Date();
-  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const validUntilMidnight = new Date(validUntilDate.getFullYear(), validUntilDate.getMonth(), validUntilDate.getDate());
-  const daysLeft = Math.round((validUntilMidnight - todayMidnight) / msPerDay);
-
-  if (daysLeft > 0) {
-    headlineEl.textContent = daysLeft === 1
-      ? "⏰ Come back TODAY to redeem!"
-      : `⏰ Come back within ${daysLeft} days to redeem!`;
-    dateEl.innerHTML = `Valid through <b>${formatDate(validUntilDate)}</b>`;
-  } else {
-    headlineEl.textContent = "This scratcher has expired";
-    dateEl.innerHTML = `It was valid through <b>${formatDate(validUntilDate)}</b>`;
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--cream);
+    color: var(--ink);
+    font-family: 'Karla', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
   }
-}
-
-function showAlreadyUsedState(record) {
-  const prizeTextEl = document.getElementById("prize-text");
-  prizeTextEl.textContent = "";
-  record.prize.split("\n").forEach(line => {
-    const div = document.createElement("div");
-    div.textContent = line;
-    prizeTextEl.appendChild(div);
-  });
-  document.getElementById("scratch-canvas").style.display = "none";
-  document.getElementById("instructions").style.display = "none";
-  const resultEl = document.getElementById("result");
-  resultEl.style.display = "block";
-  resultEl.innerHTML = `This scratcher was already used. Here's what it revealed:`;
-  document.querySelector(".scratch-wrap").style.background = "var(--cream)";
-  document.querySelector(".scratch-wrap").style.borderRadius = "16px";
-  document.querySelector(".scratch-wrap").style.padding = "20px";
-
-  const revealedAt = record.revealedAt ? new Date(record.revealedAt) : new Date();
-  const originalValidUntil = new Date(revealedAt);
-  originalValidUntil.setDate(originalValidUntil.getDate() + 30);
-  renderExpiryBanner(originalValidUntil);
-}
-
-async function checkCodeServer(code) {
-  try {
-    const res = await fetch("/api/scratch-code", {
-      method: "POST",
-      body: JSON.stringify({ code, action: "check" })
-    });
-    return await res.json();
-  } catch (e) {
-    return null;
+  .card {
+    max-width: 480px;
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 28px 24px;
+    text-align: center;
+    box-shadow: 0 12px 30px rgba(43,33,28,0.08);
   }
-}
-
-async function redeemCodeServer(code, prize) {
-  try {
-    const res = await fetch("/api/scratch-code", {
-      method: "POST",
-      body: JSON.stringify({ code, action: "redeem", prize })
-    });
-    return await res.json();
-  } catch (e) {
-    return null;
+  .steam {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--gold-deep);
+    font-family: 'Space Mono', monospace;
   }
-}
-
-async function main() {
-  let existingRecord = null;
-  if (storageKey) {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw) existingRecord = JSON.parse(raw);
-    } catch (e) {}
+  h1 {
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 800;
+    font-size: 1.8rem;
+    margin: 10px 0 4px;
+    color: var(--ink);
   }
-
-  if (!existingRecord && orderCode) {
-    const check = await checkCodeServer(orderCode);
-    if (check && check.used) {
-      existingRecord = { prize: check.prize, revealedAt: new Date().toISOString() };
-    }
+  .sub {
+    font-size: 0.9rem;
+    color: #6b5c4f;
+    margin-bottom: 22px;
   }
-
-  if (existingRecord) {
-    showAlreadyUsedState(existingRecord);
-    return;
+  .scratch-wrap {
+    position: relative;
+    max-width: 420px;
+    margin: 0 auto;
   }
-
-  const prizeTextEl = document.getElementById("prize-text");
-  const prize = pickPrize();
-  prize.split("\n").forEach(line => {
-    const div = document.createElement("div");
-    div.textContent = line;
-    prizeTextEl.appendChild(div);
-  });
-
-  initScratchCanvas(prize);
-}
-
-main();
-
-function initScratchCanvas(prize) {
-  const canvas = document.getElementById("scratch-canvas");
-  const ctx = canvas.getContext("2d");
-  const w = canvas.width;
-  const h = canvas.height;
-
-  ctx.fillStyle = "#c8c8cd";
-  ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "#a5a5ac";
-  ctx.lineWidth = 2;
-  for (let i = -h; i < w; i += 22) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i + h, h);
-    ctx.stroke();
+  #prize-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 700;
+    font-size: 1.3rem;
+    color: var(--gold-deep);
+    padding: 16px;
+    border-radius: 16px;
+    background: var(--cream);
+    gap: 4px;
   }
-  ctx.fillStyle = "#505058";
-  ctx.font = "bold 26px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("SCRATCH HERE", w / 2, h / 2);
-
-  let isDrawing = false;
-  let revealed = false;
-
-  function getPos(evt) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = w / rect.width;
-    const scaleY = h / rect.height;
-    const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
-    const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
-    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  #scratch-canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 16px;
+    touch-action: none;
+    cursor: pointer;
+    position: relative;
   }
-
-  function scratchAt(x, y) {
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.beginPath();
-    ctx.arc(x, y, 22, 0, Math.PI * 2);
-    ctx.fill();
+  #instructions {
+    font-size: 0.82rem;
+    color: #6b5c4f;
+    margin-top: 14px;
   }
-
-  function checkRevealPercent() {
-    if (revealed) return;
-    const imageData = ctx.getImageData(0, 0, w, h).data;
-    let transparent = 0;
+  #result {
+    display: none;
+    margin-top: 16px;
+    font-size: 0.85rem;
+    color: #6b5c4f;
+    background: var(--cream);
+    border-radius: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+  }
+  #result b { color: var(--ink); }
+  #screenshot-prompt {
+    display: none;
+    margin-top: 10px;
+    background: #fff4e0;
+    border: 2px dashed var(--gold);
+    color: var(--gold-deep);
+    border-radius: 12px;
+    padding: 12px 16px;
+    text-align: center;
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+  #expiry-banner {
+    display: none;
+    margin-top: 12px;
+    background: var(--cherry);
+    color: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  #expiry-banner .expiry-headline {
+    font-family: 'Baloo 2', sans-serif;
+    font-weight: 700;
+    font-size: 1.05rem;
+  }
+  #expiry-banner .expiry-date {
+    font-size: 0.85rem;
+    margin-top: 4px;
+    opacity: 0.95;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="steam">G & M Sweets</div>
+  <h1>Scratch & Win 🎉</h1>
+  <div class="sub">You've got one scratcher —
